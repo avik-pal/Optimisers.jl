@@ -776,7 +776,11 @@ julia> Optimisers.update(s, m, ([0.3, 1, 7],))[2]  # clips before discounting
 struct OptimiserChain{O<:Tuple} <: AbstractRule
   opts::O
 end
-OptimiserChain(opts...) = OptimiserChain(opts)
+
+function OptimiserChain(opts...)
+  any(opt -> opt isa MixedPrecision, opts) && throw(ArgumentError("MixedPrecision optimisers should wrap the entire OptimiserChain, not be inside it."))
+  return OptimiserChain(opts)
+end
 
 @functor OptimiserChain
 
@@ -856,3 +860,68 @@ function apply!(o::AccumGrad, state, x, dx)
     return (accum_dx, counter + 1), nothing
   end
 end
+
+"""
+    MixedPrecision([T = Float32,] opt)
+
+An optimiser that wraps another optimiser `opt` in order to perform mixed precision
+training [1]. 
+
+The state of `MixedPrecision{T}` will contain a copy in precision `T` of any trainable parameter `x`, 
+call it `xT`, as well as the internal state of `opt` also at precision `T`.
+If `T` is not specified, it defaults to `Float32`.
+
+Call `g` the gradient of `x`. Both `g` and `x` are typically in a precision lower than `T`
+(e.g. `Float16`).
+
+In the `update!(opt_state, x, g)` call, `opt` is used to update `xT` instead of `x`, 
+then `x` is updated with the value of `xT`. 
+
+# Reference
+
+[1] Micikevicius et al. '17, "Mixed Precision Training", https://arxiv.org/abs/1710.03740 .
+
+# Examples
+
+```julia
+x = rand(Float16, 2) # A trainable parameter in low precision
+
+opt = MixedPrecision(Adam(1e-3)) # Equivalent to MixedPrecision(Float32, Adam(1e-3))
+opt_state = Optimisers.setup(opt, x) # The state contains a copy of x in Float32 precision
+
+g = rand(Float16, 2) # A gradient in low precision
+
+# Accumulation is performed in high precision,
+# then also the low precision x is synced
+Optimisers.update!(opt_state, x, g)  
+```
+"""
+struct MixedPrecision{T<:Number, O<:AbstractRule} <: AbstractRule
+  rule::O
+end
+
+@functor MixedPrecision
+
+MixedPrecision(rule::AbstractRule) = MixedPrecision{Float32, typeof(rule)}(rule)
+MixedPrecision(T::Type, rule::AbstractRule) = MixedPrecision{T, typeof(rule)}(rule)
+
+function init(o::MixedPrecision{T}, x::AbstractArray) where T
+  xT = T.(x)
+  return (xT, init(o.rule, xT))
+end
+
+function apply!(o::MixedPrecision{T}, state, x, dx) where T
+  xT, st = state
+  st′, dx′ = apply!(o.rule, st, xT, dx)
+  xT = subtract!(xT, dx′)
+  if maywrite(x)
+    x .= xT
+    dx′ = nothing
+  else
+    dx′ = eltype(x).(x .- xT)
+  end
+  return (xT, st′), dx′
+end
+
+adjust(o::MixedPrecision{T}, eta::Real) where T = MixedPrecision(T, adjust(o.rule, eta))
+adjust(o::MixedPrecision{T}; kw...) where T = MixedPrecision(T, adjust(o.rule; kw...))
