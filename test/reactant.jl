@@ -14,24 +14,24 @@ using Reactant, Optimisers
 
     @testset "out of place" begin
         hlo = @code_hlo Optimisers.update(st_opt, x_ra, gs_ra)
-        @test length(findall("dense<1.100000e-02>", repr(hlo))) == 2
+        @test length(findall("1.100000e-02>", repr(hlo))) == 2
 
         st_opt2, x_ra2 = @jit Optimisers.update(st_opt, x_ra, gs_ra)
 
         hlo = @code_hlo Optimisers.update(st_opt_ra, x_ra, gs_ra)
-        @test !contains(repr(hlo), "dense<1.100000e-02>")
+        @test !contains(repr(hlo), "1.100000e-02>")
 
         st_opt2_ra, x_ra2 = @jit Optimisers.update(st_opt_ra, x_ra, gs_ra)
     end
 
     @testset "in place" begin
         hlo = @code_hlo Optimisers.update!(st_opt, x_ra, gs_ra)
-        @test length(findall("dense<1.100000e-02>", repr(hlo))) == 2
+        @test length(findall("1.100000e-02>", repr(hlo))) == 2
 
         st_opt2, x_ra2 = @jit Optimisers.update!(st_opt, x_ra, gs_ra)
 
         hlo = @code_hlo Optimisers.update!(st_opt_ra, x_ra, gs_ra)
-        @test !contains(repr(hlo), "dense<1.100000e-02>")
+        @test !contains(repr(hlo), "1.100000e-02>")
 
         st_opt2_ra, x_ra2 = @jit Optimisers.update!(st_opt_ra, x_ra, gs_ra)
     end
